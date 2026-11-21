@@ -23,3 +23,24 @@ def family(model: str) -> str:
             return name
     raise KeyError(model)
 
+
+def cost_usd(model: str, usage: dict, default_ttl: str = "5m") -> float:
+    """Dollar cost of one response's `usage` block, rounded to 6 decimals.
+
+    `cache_creation_input_tokens` is billed at `default_ttl` unless the usage
+    has a `cache_creation` breakdown ({"ephemeral_5m_input_tokens": n,
+    "ephemeral_1h_input_tokens": m}), which takes precedence.
+    Missing counts are treated as 0.
+    """
+    p = PRICES[family(model)]
+    per = p["input"] / 1e6
+    total = usage.get("input_tokens", 0) * per
+    total += usage.get("output_tokens", 0) * p["output"] / 1e6
+    total += usage.get("cache_read_input_tokens", 0) * per * CACHE_READ
+    breakdown = usage.get("cache_creation")
+    if breakdown:
+        total += breakdown.get("ephemeral_5m_input_tokens", 0) * per * CACHE_WRITE["5m"]
+        total += breakdown.get("ephemeral_1h_input_tokens", 0) * per * CACHE_WRITE["1h"]
+    else:
+        total += usage.get("cache_creation_input_tokens", 0) * per * CACHE_WRITE[default_ttl]
+    return round(total, 6)
