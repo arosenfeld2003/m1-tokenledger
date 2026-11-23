@@ -1,46 +1,37 @@
-"""Per-model prices (USD per million tokens) and cost calculation.
+"""Per-model prices (USD per million tokens, see PRICING.md) and cost calculation.
 
-Cache pricing is a multiple of the model's base input price:
-  cache read            0.1x
-  cache write, 5m TTL   1.25x
-  cache write, 1h TTL   2x
+Cache writes are a multiple of the model's input price: 1.25x (5m TTL), 2x (1h TTL).
+Cache reads have their own per-model price.
 """
 
 PRICES = {
-    "opus": {"input": 5.00, "output": 25.00},
-    "sonnet": {"input": 3.00, "output": 15.00},
-    "haiku": {"input": 1.00, "output": 5.00},
+    "claude-opus-5-5": {"input": 4.00, "output": 20.00, "cache_read": 0.20},
+    "claude-opus-5": {"input": 5.00, "output": 25.00, "cache_read": 0.50},
+    "claude-sonnet-5-5": {"input": 2.00, "output": 10.00, "cache_read": 0.20},
+    "claude-haiku-5-5": {"input": 0.10, "output": 0.50, "cache_read": 0.01},
 }
 
-CACHE_READ = 0.1
 CACHE_WRITE = {"5m": 1.25, "1h": 2.0}
 
 
-def family(model: str) -> str:
-    """'claude-opus-5-5' -> 'opus'. Raises KeyError for unknown models."""
-    for name in PRICES:
-        if name in model:
-            return name
-    raise KeyError(model)
+def cost_parts(model: str, usage: dict, default_ttl: str = "5m") -> dict[str, float]:
+    """Unrounded dollars per category. Raises KeyError for models not in PRICES."""
+    p = PRICES[model]
+    per = p["input"] / 1e6
+    breakdown = usage.get("cache_creation")
+    if breakdown:
+        write = (breakdown.get("ephemeral_5m_input_tokens", 0) * CACHE_WRITE["5m"]
+                 + breakdown.get("ephemeral_1h_input_tokens", 0) * CACHE_WRITE["1h"]) * per
+    else:
+        write = usage.get("cache_creation_input_tokens", 0) * per * CACHE_WRITE[default_ttl]
+    return {
+        "input": usage.get("input_tokens", 0) * per,
+        "output": usage.get("output_tokens", 0) * p["output"] / 1e6,
+        "cache_read": usage.get("cache_read_input_tokens", 0) * p["cache_read"] / 1e6,
+        "cache_write": write,
+    }
 
 
 def cost_usd(model: str, usage: dict, default_ttl: str = "5m") -> float:
-    """Dollar cost of one response's `usage` block, rounded to 6 decimals.
-
-    `cache_creation_input_tokens` is billed at `default_ttl` unless the usage
-    has a `cache_creation` breakdown ({"ephemeral_5m_input_tokens": n,
-    "ephemeral_1h_input_tokens": m}), which takes precedence.
-    Missing counts are treated as 0.
-    """
-    p = PRICES[family(model)]
-    per = p["input"] / 1e6
-    total = usage.get("input_tokens", 0) * per
-    total += usage.get("output_tokens", 0) * p["output"] / 1e6
-    total += usage.get("cache_read_input_tokens", 0) * per * CACHE_READ
-    breakdown = usage.get("cache_creation")
-    if breakdown:
-        total += breakdown.get("ephemeral_5m_input_tokens", 0) * per * CACHE_WRITE["5m"]
-        total += breakdown.get("ephemeral_1h_input_tokens", 0) * per * CACHE_WRITE["1h"]
-    else:
-        total += usage.get("cache_creation_input_tokens", 0) * per * CACHE_WRITE[default_ttl]
-    return round(total, 6)
+    """Dollar cost of one response's `usage` block, rounded to 6 decimals."""
+    return round(sum(cost_parts(model, usage, default_ttl).values()), 6)

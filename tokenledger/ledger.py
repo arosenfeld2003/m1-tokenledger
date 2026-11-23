@@ -1,6 +1,6 @@
 from dataclasses import dataclass, field
 
-from tokenledger.pricing import cost_usd
+from tokenledger.pricing import cost_parts, cost_usd
 
 
 @dataclass
@@ -24,3 +24,10 @@ class Ledger:
         for model, _, c in self.entries:
             out[model] = round(out.get(model, 0) + c, 6)
         return out
+
+    def breakdown(self) -> dict[str, float]:
+        out = dict.fromkeys(("input", "output", "cache_read", "cache_write"), 0.0)
+        for model, usage, _ in self.entries:
+            for k, v in cost_parts(model, usage, self.default_ttl).items():
+                out[k] += v
+        return {k: round(v, 6) for k, v in out.items()}
