@@ -1,13 +1,15 @@
-# Use real per-model prices; add cost breakdowns
+# Price a real tracer capture
 
-The ledger still uses family-level placeholder prices ("opus", "sonnet", "haiku") and a fixed 0.1x cache-read
-multiplier. That's wrong for current models.
+Our mitmproxy tracer writes one JSON object per HTTP flow an agent made:
+`seq, t_start, t_end, method, host, path, req_headers, req_body, status, resp_headers, resp_body`, with the request
+and response bodies parsed as JSON when they are JSON. We want the ledger to price a whole agent session from one of
+these captures.
 
-1. **Prices:** use the table in `PRICING.md`, looked up by exact model ID. A model that isn't in the table raises
-   `KeyError`. Cache reads use each model's own cache-read price; cache writes stay 1.25x / 2x of input.
-2. **`Ledger.breakdown()`:** return the session's dollars split into
-   `{"input": ..., "output": ..., "cache_read": ..., "cache_write": ...}`, each rounded to 6 decimals.
-3. **CLI `--by-model`:** after the total line, print `by model:` and then one line per model, sorted by model ID,
-   formatted `"  {model:<18} ${cost:.6f}"`.
-4. **Tests:** `tests/test_issue.py` has the acceptance tests. Update the existing tests to the new prices; don't
-   delete tests to make the suite pass.
+1. **`tokenledger/capture.py`:** `load_calls(path) -> list[dict]` returns `{"model": ..., "usage": ...}` for every
+   Messages API call in the capture, in capture order.
+2. **CLI:** `python -m tokenledger.cli --capture FILE` summarizes a capture exactly like a calls file (and works with
+   `--ttl` and `--by-model`).
+3. **Models not in `PRICING.md`** must not crash the summary: leave them out of the rows and totals, and print one
+   warning line to stderr naming them.
+4. **Tests:** `tests/test_capture.py` runs against a real capture at `tests/fixtures/capture.jsonl` (gitignored:
+   captures contain account details). Keep the whole suite passing.
